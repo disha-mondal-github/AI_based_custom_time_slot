@@ -226,11 +226,17 @@ def create_numbered_marker(number: int, color: str = 'blue') -> folium.DivIcon:
         '''
     )
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache results for 1 hour
 def geocode_address(address: str, original_address: str) -> Tuple[Optional[List[float]], Optional[str]]:
-    """Geocoding function that returns coordinates for any valid address."""
+    """Geocoding function with consistent fallback behavior for invalid addresses."""
+    
+    # First check if we have cached coordinates for this exact address
+    cache_key = f"geocode_{address}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key], original_address
+
     url = "https://api.mapbox.com/geocoding/v5/mapbox.places/"
-    params = {
+    base_params = {
         'access_token': ACCESS_TOKEN,
         'limit': 1,
         'country': 'IN',
@@ -239,34 +245,66 @@ def geocode_address(address: str, original_address: str) -> Tuple[Optional[List[
         'proximity': '77.2,28.5'
     }
     
-    try:
-        response = requests.get(f"{url}{address}.json", params=params)
-        response.raise_for_status()
-        data = response.json()
-        
-        if 'features' in data and data['features']:
-            coords = data['features'][0]['geometry']['coordinates']
-            return coords, original_address
+    def try_geocoding(query: str, params: dict) -> Optional[List[float]]:
+        try:
+            response = requests.get(f"{url}{query}.json", params=params)
+            response.raise_for_status()
+            data = response.json()
             
-    except requests.exceptions.RequestException:
-        pass
-    
-    try:
-        # Simplified address attempt
-        area = address.split(",")[0]
-        response = requests.get(f"{url}{area}, New Delhi.json", params=params)
-        response.raise_for_status()
-        data = response.json()
+            if 'features' in data and data['features']:
+                return data['features'][0]['geometry']['coordinates']
+        except requests.exceptions.RequestException:
+            pass
+        return None
+
+    # Try different geocoding strategies in a consistent order
+    strategies = [
+        # Strategy 1: Full address
+        (address, base_params),
         
-        if 'features' in data and data['features']:
-            coords = data['features'][0]['geometry']['coordinates']
-            return coords, original_address
+        # Strategy 2: First part of address with post office area
+        (f"{address.split(',')[0]}, New Delhi", base_params),
+        
+        # Strategy 3: Extracted area name with stricter parameters
+        (f"{address.split(',')[0]}", {**base_params, 'types': 'place,neighborhood'}),
+        
+        # Strategy 4: Deterministic fallback point for the specific post office area
+        (f"Central Delhi", {**base_params, 'types': 'place'})
+    ]
+
+    for query, params in strategies:
+        coords = try_geocoding(query, params)
+        if coords:
+            # Add small deterministic offset based on hash of original address
+            # This ensures same invalid address always gets same offset
+            offset = (
+                (hash(original_address) % 100) / 10000,  # Lat offset (-0.01 to 0.01)
+                (hash(original_address) % 50) / 10000    # Lon offset (-0.005 to 0.005)
+            )
+            final_coords = [
+                coords[0] + offset[1],  # Add lon offset
+                coords[1] + offset[0]   # Add lat offset
+            ]
             
-    except requests.exceptions.RequestException:
-        pass
+            # Cache the result
+            st.session_state[cache_key] = final_coords
+            return final_coords, original_address
+
+    # Final fallback: Central Delhi with deterministic offset
+    fallback_coords = [77.2090, 28.6139]  # Central Delhi coordinates
+    offset = (
+        (hash(original_address) % 100) / 10000,
+        (hash(original_address) % 50) / 10000
+    )
+    final_fallback = [
+        fallback_coords[0] + offset[1],
+        fallback_coords[1] + offset[0]
+    ]
     
-    st.error(f"Failed to geocode: {original_address}")
-    return None, None
+    # Cache the fallback result
+    st.session_state[cache_key] = final_fallback
+    st.warning(f"Using approximate location for address: {original_address}")
+    return final_fallback, original_address
 
 def adjust_nearby_coordinates(coordinates: List[List[float]], min_distance: float = 0.0001) -> List[List[float]]:
     """Adjust coordinates that are too close to each other."""
@@ -358,8 +396,9 @@ def display_route_map(post_office: str, deliveries: list):
         if post_office_coords:
             delivery_coords = []
             delivery_addresses = []
+            invalid_addresses = []
             
-            for delivery in deliveries:
+            for idx, delivery in enumerate(deliveries, 1):
                 coords, matched_address = geocode_address(
                     delivery['Receiver Address'], 
                     delivery['Receiver Address']
@@ -367,6 +406,12 @@ def display_route_map(post_office: str, deliveries: list):
                 if coords:
                     delivery_coords.append(coords)
                     delivery_addresses.append(matched_address)
+                    if coords[0] == 77.2090 or coords[1] == 28.6139:  # If using fallback coordinates
+                        invalid_addresses.append(f"Stop {idx}: {matched_address}")
+
+            if invalid_addresses:
+                st.warning("The following addresses were approximated:\n" + "\n".join(invalid_addresses))
+
             
             if delivery_coords:
                 adjusted_coords = adjust_nearby_coordinates(delivery_coords)

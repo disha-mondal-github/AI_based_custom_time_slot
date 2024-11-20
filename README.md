@@ -42,10 +42,10 @@ By leveraging AI-driven recommendations and real-time data, our solution minimiz
 
 ### Tech Stack
 
-- **Frontend:** [Next.js](https://nextjs.org/), [Tailwind CSS](https://tailwindcss.com/)
+- **Frontend:** [Next.js](https://nextjs.org/), [Tailwind CSS](https://tailwindcss.com/), streamlit
 - **Backend:** [Node.js](https://nodejs.org/), [FastAPI](https://fastapi.tiangolo.com/), [MongoDB](https://www.mongodb.com/)
-- **AI & ML:** RandomForestClassifier, [LangChain](https://www.langchain.com/), [Llama Index](https://www.llamain.com/)
-- **APIs:** [Geoapify API](https://www.geoapify.com/) for real-time route optimization
+- **AI & ML:** RandomForestClassifier, [Llama Index](https://www.llamain.com/)
+- **APIs:** [Mapbox API](https://www.mapbox.com/) for real-time route optimization
 
 ### Workflow
 
